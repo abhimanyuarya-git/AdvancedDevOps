@@ -1,14 +1,14 @@
-# Step-07: SonarCloud Integration with Jenkins
+# Step-07: SonarQube Cloud Integration with Jenkins
 
 <details>
-<summary><strong>1. Generate an Access Token in SonarCloud and Add SonarQube Server Credentials in Jenkins</strong></summary>
+<summary><strong>1. Generate an Access Token in SonarQubeCloud and Add SonarQube Server Credentials in Jenkins</strong></summary>
 
 <br/>
 
-### Generating an Access Token in SonarCloud
+### Generating an Access Token in SonarQube Cloud
 
-1. **Log in to SonarCloud:**  
-   Log in to your SonarCloud account.
+1. **Log in to SonarQube Cloud:**  
+   Log in to your SonarQube Cloud account.
 
 2. **Navigate to User Token:**  
    Click on your profile picture ➔ "My Account" ➔ "Security" ➔ "Generate Token."
@@ -31,7 +31,7 @@
 
 3. **Add Secret Text:**  
    - **Kind:** Secret text  
-   - **Secret:** Paste the SonarCloud access token  
+   - **Secret:** Paste the SonarQube Cloud access token  
    - **ID:** Set a unique identifier  
    - **Description:** (Optional) Helpful label
 
@@ -40,7 +40,7 @@
 
 ---
 
-### Configuring SonarCloud in Jenkins Job:
+### Configuring SonarQube Cloud in Jenkins Job:
 
 1. **Configure Jenkins Job:**  
    Edit/create a job ➔ Find "SonarQube Scanner" section.
@@ -52,7 +52,7 @@
 3. **Save:**  
    Save the job configuration.
 
-Now Jenkins can run SonarCloud code analysis!
+Now Jenkins can run SonarQube Cloud code analysis!
 
 </details>
 
@@ -99,7 +99,7 @@ The plugin is now ready for use!
 
 4. **Server Details:**  
    - **Name:** Descriptive label  
-   - **Server URL:** Your SonarCloud URL  
+   - **Server URL:** Your SonarQube Cloud URL  
    - **Authentication Token:** Select previously added credentials.
 
 5. **Save Configuration.**
@@ -139,13 +139,13 @@ The plugin is now ready for use!
 ---
 
 <details>
-<summary><strong>5. Configure Organization, Project in SonarCloud & sonar-project.properties File</strong></summary>
+<summary><strong>5. Configure Organization, Project in SonarQube Cloud & sonar-project.properties File</strong></summary>
 
 <br/>
 
-### Organization and Project Setup in SonarCloud:
+### Organization and Project Setup in SonarQube Cloud:
 
-1. **Log in to SonarCloud.**
+1. **Log in to SonarQube Cloud.**
 
 2. **Create Organization:**  
    If not done already ➔ Create new org.
@@ -231,6 +231,6 @@ Now, every Jenkins build will:
 - Checkout code
 - Build
 - Run unit tests
-- Perform SonarCloud code quality analysis
+- Perform SonarQube Cloud code quality analysis
 
 </details>
