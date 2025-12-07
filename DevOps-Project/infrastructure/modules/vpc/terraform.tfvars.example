@@ -1,0 +1,111 @@
+# ---------------------------------------------------------------------------------------------------------------------
+# VPC MODULE CONFIGURATION
+# This is an example tfvars file. Copy this to terraform.tfvars and customize for your environment.
+# ---------------------------------------------------------------------------------------------------------------------
+
+# Required Variables
+vpc_name         = "production-vpc"
+cidr_block       = "10.0.0.0/16"
+num_nat_gateways = 3
+
+# Availability Zones
+num_availability_zones = 3
+# availability_zone_ids = ["use1-az1", "use1-az2", "use1-az3"]  # Optional: Specify exact AZ IDs
+
+# Subnet Configuration
+create_public_subnets              = true
+create_private_app_subnets         = true
+create_private_persistence_subnets = true
+create_inspection_subnets          = false
+create_transit_subnets             = false
+
+# Internet Access Control
+allow_private_app_internet_access         = true
+allow_private_persistence_internet_access = false
+allow_inspection_internet_access          = false
+allow_transit_internet_access             = false
+
+# DNS Configuration
+enable_dns_hostnames = true
+enable_dns_support   = true
+
+# VPC Endpoints
+create_vpc_endpoints = true
+
+# NAT Gateway Configuration
+use_custom_nat_eips = false
+# custom_nat_eips = []  # Provide EIP allocation IDs if use_custom_nat_eips = true
+
+# Subnet Naming
+public_subnet_name              = "public"
+private_subnet_name             = "private-app"
+private_persistence_subnet_name = "private-persistence"
+inspection_subnet_name          = "inspection"
+transit_subnet_name             = "transit"
+
+# Route Table Configuration
+one_route_table_public_subnets = true
+
+# Tags
+custom_tags = {
+  Environment = "production"
+  ManagedBy   = "terraform"
+  Project     = "devops-project"
+  Owner       = "platform-team"
+}
+
+vpc_custom_tags = {
+  Type = "production-vpc"
+}
+
+public_subnet_custom_tags = {
+  Tier = "public"
+  Type = "dmz"
+}
+
+private_app_subnet_custom_tags = {
+  Tier = "private"
+  Type = "application"
+}
+
+private_persistence_subnet_custom_tags = {
+  Tier = "private"
+  Type = "database"
+}
+
+# Subnet CIDR Blocks (Optional - Auto-calculated if not specified)
+# public_subnet_cidr_blocks = {
+#   "AZ-0" = "10.0.0.0/24"
+#   "AZ-1" = "10.0.1.0/24"
+#   "AZ-2" = "10.0.2.0/24"
+# }
+
+# private_app_subnet_cidr_blocks = {
+#   "AZ-0" = "10.0.10.0/24"
+#   "AZ-1" = "10.0.11.0/24"
+#   "AZ-2" = "10.0.12.0/24"
+# }
+
+# private_persistence_subnet_cidr_blocks = {
+#   "AZ-0" = "10.0.20.0/24"
+#   "AZ-1" = "10.0.21.0/24"
+#   "AZ-2" = "10.0.22.0/24"
+# }
+
+# Subnet Bits Configuration
+public_subnet_bits      = 5
+private_subnet_bits     = 5
+persistence_subnet_bits = 5
+
+# Advanced Configuration
+tenancy                              = "default"
+map_public_ip_on_launch              = false
+create_igw                           = true
+create_default_route_table_route     = true
+enable_default_security_group        = true
+enable_network_address_usage_metrics = false
+
+# Route Table Timeouts
+route_table_creation_timeout = "5m"
+route_table_update_timeout   = "2m"
+route_table_deletion_timeout = "5m"

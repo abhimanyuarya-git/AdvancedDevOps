@@ -1,69 +1,12 @@
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # CREATE A VPC
-# This Terraform template creates a full VPC meant to run apps. The VPC includes 3 types of subnets:
+# This Terraform template creates a full VPC meant to run apps. The VPC includes 5 types of subnets:
 # - Public (one per AZ)
 # - Private-App (one per AZ)
-# - Private-Peristence (one per AZ)
+# - Private-Persistence (one per AZ)
+# - Inspection (one per AZ, optional)
+# - Transit (one per AZ, optional)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ---------------------------------------------------------------------------------------------------------------------
-# SET TERRAFORM RUNTIME REQUIREMENTS
-# ---------------------------------------------------------------------------------------------------------------------
-
-terraform {
-  required_version = "~> 1.3"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.0.0"
-    }
-    null = {
-      source  = "hashicorp/null"
-      version = ">= 3.1.0"
-    }
-  }
-}
-
-# ---------------------------------------------------------------------------------------------------------------------
-# LOOKUP THE IPv4 and IPv6 IPAM POOLS
-# If the user has provided a list of IPv4 or IPv6 IPAM pools, then we will use those. Otherwise, we will use the var.cidr_block
-# ---------------------------------------------------------------------------------------------------------------------
-
-locals {
-  ipv4_ipam_pool_id = length(data.aws_vpc_ipam_pool.ipv4) > 0 ? data.aws_vpc_ipam_pool.ipv4[0].id : var.ipv4_ipam_pool_id
-  ipv6_ipam_pool_id = length(data.aws_vpc_ipam_pool.ipv6) > 0 ? data.aws_vpc_ipam_pool.ipv6[0].id : var.ipv6_ipam_pool_id
-}
-
-data "aws_vpc_ipam_pool" "ipv4" {
-  # Why do we use try here? The length function gives an error if you pass it null. So why not do:
-  #   var.ipam_pool_filters != null && length(var.ipv4_ipam_pool_filters)
-  # Because && is NOT short circuiting: https://github.com/hashicorp/terraform/issues/24128
-  count = try(length(var.ipv4_ipam_pool_filters), 0) > 0 ? 1 : 0
-
-  dynamic "filter" {
-    for_each = var.ipv4_ipam_pool_filters
-    content {
-      name   = filter.value.name
-      values = filter.value.values
-    }
-  }
-}
-
-data "aws_vpc_ipam_pool" "ipv6" {
-  # Why do we use try here? The length function gives an error if you pass it null. So why not do:
-  #   var.ipam_pool_filters != null && length(var.ipv6_ipam_pool_filters)
-  # Because && is NOT short circuiting: https://github.com/hashicorp/terraform/issues/24128
-  count = try(length(var.ipv6_ipam_pool_filters), 0) > 0 ? 1 : 0
-
-  dynamic "filter" {
-    for_each = var.ipv6_ipam_pool_filters
-    content {
-      name   = filter.value.name
-      values = filter.value.values
-    }
-  }
-}
 
 # ---------------------------------------------------------------------------------------------------------------------
 # CREATE VPC AND INTERNET GATEWAY
@@ -91,46 +34,26 @@ resource "aws_vpc" "main" {
   )
 }
 
-# Create secondary CIDR blocks if set
 resource "aws_vpc_ipv4_cidr_block_association" "secondary_cidr_block" {
   for_each = var.secondary_cidr_blocks
 
+  vpc_id     = aws_vpc.main.id
   cidr_block = each.key
-  # TODO - Future feature add IPAM
-  # ipv4_ipam_pool_id = var.ipv4_ipam_pool_id
-  # ipv4_netmask_length = var.ipv4_netmask_length
-  vpc_id = aws_vpc.main.id
 }
 
-# Assign DHCP Options if dhcp_options_id is set
 resource "aws_vpc_dhcp_options_association" "dhcp_option_set" {
-  count           = var.dhcp_options_id == null ? 0 : 1
+  count = var.dhcp_options_id != null ? 1 : 0
+
   vpc_id          = aws_vpc.main.id
   dhcp_options_id = var.dhcp_options_id
 }
 
-# Create an Internet Gateway for our VPC
-# The creation of the Internet Gateway is controlled
-# by the variable create_igw
 resource "aws_internet_gateway" "main" {
   count = var.create_public_subnets && var.create_igw ? 1 : 0
 
   vpc_id = aws_vpc.main.id
-  tags = merge(
-    { Name = "${var.vpc_name}-igw" },
-    var.custom_tags,
-  )
+  tags   = merge({ Name = "${var.vpc_name}-igw" }, var.custom_tags)
 }
-
-# Get a list of Availability Zones in the current region
-data "aws_availability_zones" "all" {
-  state            = var.availability_zone_state
-  exclude_names    = var.availability_zone_exclude_names
-  exclude_zone_ids = var.availability_zone_exclude_ids
-}
-
-# Get the current region
-data "aws_region" "current" {}
 
 # ---------------------------------------------------------------------------------------------------------------------
 # CONFIGURE THE DEFAULT SECURITY GROUP, NETWORK ACLS, AND ROUTE TABLE
@@ -138,15 +61,9 @@ data "aws_region" "current" {}
 
 resource "aws_default_route_table" "default" {
   default_route_table_id = aws_vpc.main.default_route_table_id
-  tags = merge(
-    { Name = var.vpc_name },
-    var.custom_tags
-  )
+  tags                   = merge({ Name = var.vpc_name }, var.custom_tags)
 }
 
-# It's important that we add the outbound internet rule for the default route table, otherwise, it will not create it since
-# we are explicitly creating the default route table:
-# https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/default_route_table
 resource "aws_route" "default_internet" {
   count = var.create_default_route_table_route && var.create_public_subnets && var.create_igw ? 1 : 0
 
@@ -154,13 +71,7 @@ resource "aws_route" "default_internet" {
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.main[0].id
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_default_route_table.default,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_default_route_table.default]
 }
 
 resource "aws_route" "default_ipv6_internet" {
@@ -170,13 +81,7 @@ resource "aws_route" "default_ipv6_internet" {
   destination_ipv6_cidr_block = "::/0"
   gateway_id                  = aws_internet_gateway.main[0].id
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_default_route_table.default,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_default_route_table.default]
 }
 
 resource "aws_default_security_group" "default" {
@@ -274,15 +179,8 @@ resource "aws_default_network_acl" "default" {
 
 # ---------------------------------------------------------------------------------------------------------------------
 # CREATE PUBLIC SUBNETS
-# Any resource that must be addressable from the public Internet should be placed in a Public Subnet.  E.g. ELB's, web
-# servers, etc.
 # ---------------------------------------------------------------------------------------------------------------------
 
-locals {
-  num_public_subnets = var.create_public_subnets ? local.num_availability_zones : 0
-}
-
-# Create public subnets, one per Availability Zone
 resource "aws_subnet" "public" {
   count = local.num_public_subnets
 
@@ -349,8 +247,6 @@ resource "aws_route_table" "public" {
   }
 }
 
-# It's important that we define this route as a separate terraform resource and not inline in aws_route_table.public because
-# otherwise Terraform will not function correctly, per the note at https://www.terraform.io/docs/providers/aws/r/route.html.
 resource "aws_route" "internet" {
   count = (
     var.create_public_subnets && var.create_igw
@@ -362,15 +258,8 @@ resource "aws_route" "internet" {
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.main[0].id
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.public,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_route_table.public]
 
-  # Workaround for https://github.com/terraform-providers/terraform-provider-aws/issues/338
   timeouts {
     create = "5m"
   }
@@ -387,15 +276,8 @@ resource "aws_route" "ipv6_default_gateway" {
   destination_ipv6_cidr_block = "::/0"
   gateway_id                  = aws_internet_gateway.main[0].id
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.public,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_route_table.public]
 
-  # Workaround for https://github.com/terraform-providers/terraform-provider-aws/issues/338
   timeouts {
     create = "5m"
   }
@@ -418,31 +300,19 @@ resource "aws_route_table_association" "public" {
 
 # ---------------------------------------------------------------------------------------------------------------------
 # LAUNCH THE NAT GATEWAYS
-# A NAT Gateway enables instances in the private subnet to connect to the Internet or other AWS services, but prevents
-# the Internet from initiating a connection to those instances.
-#
-# When launching a development VPC, route all traffic through a single NAT Gateway in one Availability Zone to save
-# money.  When launching a production VPC, route traffic through one NAT Gateway per Availability Zone for maximum
-# availability.
-#
-# See http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-nat-gateway.html
 # ---------------------------------------------------------------------------------------------------------------------
 
-locals {
-  create_nat_eips   = var.create_public_subnets && var.use_custom_nat_eips == false ? var.num_nat_gateways : 0
-  count_public_nat  = var.create_public_subnets && var.enable_private_nat != true ? var.num_nat_gateways : 0
-  count_private_nat = var.enable_private_nat == true ? var.num_nat_gateways : 0
-}
-
-# A NAT Gateway must be associated with an Elastic IP Address
 resource "aws_eip" "nat" {
-  count      = local.create_nat_eips
+  count = local.create_nat_eips
+
   domain     = "vpc"
   tags       = var.custom_tags
   depends_on = [aws_internet_gateway.main]
 }
+
 resource "aws_eip" "nat_secondary_eip" {
-  count      = var.create_nat_secondary_eip ? local.count_public_nat : 0
+  count = var.create_nat_secondary_eip ? local.count_public_nat : 0
+
   domain     = "vpc"
   tags       = var.custom_tags
   depends_on = [aws_internet_gateway.main]
@@ -491,20 +361,8 @@ resource "aws_nat_gateway" "private_nat" {
 
 # ---------------------------------------------------------------------------------------------------------------------
 # CREATE PRIVATE SUBNETS AT THE "APP" TIER
-# These subnets are private and meant to house any application/service that does not require direct connectivity from
-# users.  Includes app servers, queue processors, reporting systems, etc.
 # ---------------------------------------------------------------------------------------------------------------------
 
-locals {
-  num_private_app_subnets = var.create_private_app_subnets ? local.num_availability_zones : 0
-  count_private_nat_route = (
-    var.create_private_app_subnets && var.create_public_subnets && var.allow_private_app_internet_access && var.num_nat_gateways > 0 && !var.enable_private_nat && !var.create_inspection_subnets
-    ? local.num_availability_zones
-    : 0
-  )
-}
-
-# Create a private subnets per AZ for our "App" tier
 resource "aws_subnet" "private-app" {
   count = local.num_private_app_subnets
 
@@ -557,26 +415,15 @@ resource "aws_route_table" "private-app" {
   }
 }
 
-# Create a route for outbound Internet traffic.
 resource "aws_route" "nat" {
   count = local.count_private_nat_route
 
   route_table_id         = aws_route_table.private-app[count.index].id
   destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = element(aws_nat_gateway.nat[*].id, count.index)
 
-  # We use element instead of [] for the wraparound behavior, since there may be less NAT gateways than there are
-  # availability zones.
-  nat_gateway_id = element(aws_nat_gateway.nat.*.id, count.index)
+  depends_on = [aws_internet_gateway.main, aws_route_table.private-app]
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.private-app,
-  ]
-
-  # Workaround for https://github.com/terraform-providers/terraform-provider-aws/issues/338
   timeouts {
     create = "5m"
   }
@@ -600,20 +447,8 @@ resource "aws_route_table_association" "private-app" {
 
 # ---------------------------------------------------------------------------------------------------------------------
 # CREATE PRIVATE SUBNETS AT THE "PERSISTENCE" TIER
-# These subnets are private and meant to house any persistence resources. This includes Relational Databases, Cache,
-# NoSQL Databases, etc.
 # ---------------------------------------------------------------------------------------------------------------------
 
-locals {
-  num_private_persistence_subnets = var.create_private_persistence_subnets ? local.num_availability_zones : 0
-  count_private_persistence_nat_route = (
-    var.create_private_persistence_subnets && var.create_public_subnets && var.allow_private_persistence_internet_access && var.num_nat_gateways > 0 && !var.enable_private_nat && !var.create_inspection_subnets
-    ? local.num_availability_zones
-    : 0
-  )
-}
-
-# Create one private subnet per AZ for our "Persistence" tier
 resource "aws_subnet" "private-persistence" {
   depends_on = [aws_vpc_ipv4_cidr_block_association.secondary_cidr_block]
   count      = local.num_private_persistence_subnets
@@ -662,23 +497,15 @@ resource "aws_route_table" "private-persistence" {
   }
 }
 
-# Create a route for outbound Internet traffic.
 resource "aws_route" "private_persistence_nat" {
   count = local.count_private_persistence_nat_route
 
-  route_table_id         = element(aws_route_table.private-persistence.*.id, count.index)
+  route_table_id         = aws_route_table.private-persistence[count.index].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = element(aws_nat_gateway.nat.*.id, count.index)
+  nat_gateway_id         = element(aws_nat_gateway.nat[*].id, count.index)
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.private-persistence,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_route_table.private-persistence]
 
-  # Workaround for https://github.com/terraform-providers/terraform-provider-aws/issues/338
   timeouts {
     create = "5m"
   }
@@ -702,20 +529,7 @@ resource "aws_route_table_association" "private-persistence" {
 
 # ---------------------------------------------------------------------------------------------------------------------
 # CREATE INSPECTION SUBNETS
-# These subnets are meant to house any inspection endpoints. This includes Network Firewall, WAF, etc.
-# - Create one inspection subnet per AZ
-# - Create a Route Table for each inspection subnet
-# - Associate each inspection subnet with its respective route table
-# - Create a route for outbound Internet traffic
 # ---------------------------------------------------------------------------------------------------------------------
-locals {
-  num_inspection_subnets = var.create_inspection_subnets ? local.num_availability_zones : 0
-  count_inspection_nat_route = (
-    var.create_inspection_subnets && var.create_public_subnets && var.allow_inspection_internet_access && var.num_nat_gateways > 0
-    ? local.num_availability_zones
-    : 0
-  )
-}
 
 resource "aws_subnet" "inspection" {
   count = local.num_inspection_subnets
@@ -760,7 +574,8 @@ resource "aws_route_table" "inspection" {
 }
 
 resource "aws_route_table_association" "inspection" {
-  count          = local.num_inspection_subnets
+  count = local.num_inspection_subnets
+
   subnet_id      = aws_subnet.inspection[count.index].id
   route_table_id = aws_route_table.inspection[count.index].id
 }
@@ -768,35 +583,20 @@ resource "aws_route_table_association" "inspection" {
 resource "aws_route" "inspection_nat" {
   count = local.count_inspection_nat_route
 
-  route_table_id         = element(aws_route_table.inspection[*].id, count.index)
+  route_table_id         = aws_route_table.inspection[count.index].id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = element(aws_nat_gateway.nat[*].id, count.index)
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.inspection,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_route_table.inspection]
 
-  # Workaround for https://github.com/terraform-providers/terraform-provider-aws/issues/338
   timeouts {
     create = "5m"
   }
 }
-
-
 # ---------------------------------------------------------------------------------------------------------------------
 # CREATE TRANSIT SUBNETS
-# These subnets are private and meant to house network transit resources. This includes transit gateways, private NAT gateways, or network appliances.
 # ---------------------------------------------------------------------------------------------------------------------
 
-locals {
-  num_transit_subnets = var.create_transit_subnets ? local.num_availability_zones : 0
-}
-
-# Create one transit subnet per AZ for our "Transit" tier
 resource "aws_subnet" "transit" {
 
   count = local.num_transit_subnets
@@ -847,7 +647,6 @@ resource "aws_route_table" "transit" {
   }
 }
 
-# Create a route for outbound Internet traffic.
 resource "aws_route" "transit_nat" {
   count = (
     var.create_transit_subnets && var.create_public_subnets && var.allow_transit_internet_access && var.num_nat_gateways > 0
@@ -855,19 +654,12 @@ resource "aws_route" "transit_nat" {
     : 0
   )
 
-  route_table_id         = element(aws_route_table.transit.*.id, count.index)
+  route_table_id         = aws_route_table.transit[count.index].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = element(aws_nat_gateway.nat.*.id, count.index)
+  nat_gateway_id         = element(aws_nat_gateway.nat[*].id, count.index)
 
-  # A workaround for a series of eventual consistency bugs in Terraform. For a list of the errors, see the related
-  # bugs described in this issue: https://github.com/hashicorp/terraform/issues/8542. The workaround is based on:
-  # https://github.com/hashicorp/terraform/issues/5335 and https://charity.wtf/2016/04/14/scrapbag-of-useful-terraform-tips/
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.transit,
-  ]
+  depends_on = [aws_internet_gateway.main, aws_route_table.transit]
 
-  # Workaround for https://github.com/terraform-providers/terraform-provider-aws/issues/338
   timeouts {
     create = "5m"
   }
@@ -883,11 +675,6 @@ resource "aws_route_table_association" "transit" {
 
 # ---------------------------------------------------------------------------------------------------------------------
 # SETUP VPC ENDPOINTS
-# This ensures that all requests to the AWS API for S3 and DynamoDB are routed through the VPC instead of the Public
-# Internet. We use aws_vpc_endpoint_route_table_association resources rather than associating route tables directly
-# in the aws_vpc_endpoint resource to avoid dependency errors when modifying route tables.
-# See: https://github.com/gruntwork-io/terraform-aws-vpc/pull/89
-#      https://github.com/gruntwork-io/terraform-aws-vpc/issues/49
 # ---------------------------------------------------------------------------------------------------------------------
 
 resource "aws_vpc_endpoint" "s3" {
@@ -979,10 +766,7 @@ resource "aws_vpc_endpoint_route_table_association" "dynamodb_transit" {
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
-# USE A NULL RESOURCE TO INDICATE THAT THE VPC HAS FINISHED CREATING
-# Other resources can depend on this one to make sure they don't create anything in the VPC before it's ready. This
-# can help to work around a Terraform or AWS issue where trying to create certain resources, such as Network ACLs,
-# before the VPC's Gateway and NATs are ready, leads to a huge variety of eventual consistency bugs.
+# VPC READY MARKER
 # ---------------------------------------------------------------------------------------------------------------------
 
 resource "null_resource" "vpc_ready" {
@@ -990,35 +774,8 @@ resource "null_resource" "vpc_ready" {
     aws_internet_gateway.main,
     aws_vpc_ipv4_cidr_block_association.secondary_cidr_block,
     aws_nat_gateway.nat,
+    aws_nat_gateway.private_nat,
     aws_route.internet,
     aws_route.nat,
   ]
-}
-
-# ---------------------------------------------------------------------------------------------------------------------
-# CONVENIENCE VARIABLES
-# ---------------------------------------------------------------------------------------------------------------------
-
-locals {
-  # We will use the num_availability_zones variable input if it is set. Otherwise, check if availability_zone_ids is set
-  # by the user, and if it is, use that. Finally, fall back to checking all the availability zones that AWS has for the
-  # configured region.
-  num_availability_zones = (
-    var.num_availability_zones == null
-    ? (
-      var.availability_zone_ids == null
-      ? length(data.aws_availability_zones.all.names)
-      : length(var.availability_zone_ids)
-    )
-    : min(var.num_availability_zones, length(data.aws_availability_zones.all.names))
-  )
-
-  # This local variable is used to determine if we should use the global subnet spacing or the previous default subnet spacing.
-  # Using additional subnets requires shifting the spacing down to the maximum quantity of availability zones, six.
-  subnet_spacing_selector = var.create_transit_subnets || var.create_inspection_subnets ? var.global_subnet_spacing : var.subnet_spacing
-  private_spacing         = var.private_subnet_spacing != null ? var.private_subnet_spacing : local.subnet_spacing_selector
-  persistence_spacing     = var.persistence_subnet_spacing != null ? var.persistence_subnet_spacing : 2 * local.subnet_spacing_selector
-  transit_spacing         = var.transit_subnet_spacing != null ? var.transit_subnet_spacing : 3 * local.subnet_spacing_selector
-  inspection_spacing      = var.inspection_subnet_spacing != null ? var.inspection_subnet_spacing : 4 * local.subnet_spacing_selector
-  nat_eips                = var.use_custom_nat_eips ? var.custom_nat_eips : aws_eip.nat[*].id
 }
