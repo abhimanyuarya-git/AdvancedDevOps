@@ -1,0 +1,42 @@
+---
+- name: Setup Passwordless SSH from Ansible Controller
+  hosts: localhost
+  connection: local
+  vars:
+    ansible_controller_ip: "{{ groups['ansible_controller'][0] }}"
+    target_hosts: "{{ groups['jenkins_master'] + groups['jenkins_agents'] }}"
+  tasks:
+    - name: Generate SSH key pair on Ansible Controller
+      openssh_keypair:
+        path: ~/.ssh/id_rsa
+        type: rsa
+        size: 4096
+        state: present
+        force: no
+      delegate_to: "{{ ansible_controller_ip }}"
+
+    - name: Read public key
+      slurp:
+        src: ~/.ssh/id_rsa.pub
+      register: ssh_pub_key
+      delegate_to: "{{ ansible_controller_ip }}"
+
+    - name: Add public key to authorized_keys on all managed nodes
+      authorized_key:
+        user: ec2-user
+        key: "{{ ssh_pub_key.content | b64decode }}"
+        state: present
+      delegate_to: "{{ item }}"
+      loop: "{{ target_hosts }}"
+
+    - name: Test passwordless SSH connection
+      command: ssh -o StrictHostKeyChecking=no ec2-user@{{ item }} echo "SSH connection successful"
+      delegate_to: "{{ ansible_controller_ip }}"
+      loop: "{{ target_hosts }}"
+      register: ssh_test
+      changed_when: false
+
+    - name: Display SSH test results
+      debug:
+        msg: "✅ Passwordless SSH configured for {{ item.item }}"
+      loop: "{{ ssh_test.results }}"

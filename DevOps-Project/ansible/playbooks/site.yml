@@ -1,0 +1,4 @@
+---
+- import_playbook: ansible-controller.yml
+- import_playbook: jenkins-master.yml
+- import_playbook: jenkins-agent.yml

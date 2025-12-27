@@ -35,3 +35,9 @@ custom_tags = {
   Project     = "devops-project"
   CostCenter  = "engineering"
 }
+
+# EC2 Instance Configuration
+ami_id              = "ami-00ca570c1b6d79f36"  # Amazon Linux 2023 (update for your region)
+instance_type       = "t3.micro"
+key_name            = "abhimanyu-innovantra"     # Replace with your actual key pair name
+jenkins_agent_count = 2

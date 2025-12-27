@@ -806,3 +806,29 @@ variable "aws_region" {
   type        = string
   default     = ""
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# EC2 INSTANCE PARAMETERS
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "ami_id" {
+  description = "The AMI ID to use for EC2 instances (Ansible Controller, Jenkins Master, Jenkins Agent)"
+  type        = string
+}
+
+variable "instance_type" {
+  description = "The instance type for EC2 instances"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "key_name" {
+  description = "The name of the EC2 Key Pair to use for SSH access"
+  type        = string
+}
+
+variable "jenkins_agent_count" {
+  description = "Number of Jenkins Agent instances to create"
+  type        = number
+  default     = 2
+}
